@@ -33,7 +33,7 @@ p9LitNum = iso litNum2p9litNum p9litNum2litNum
 type P9TermPath = [Int]
 
 p9TermAt :: Path -> Traversal' Literal Term
-p9TermAt (predArgNum : termPath) = atom . predicateArguments . ix (predArgNum-1) . subTermAt (map pred termPath)
+p9TermAt (predArgNum : termPath) = atom . elementOf predicateArguments (predArgNum-1) . subTermAt (map pred termPath)
 
 data PrimaryStep
     = Assumption
@@ -80,9 +80,8 @@ parsePred = do
 parseMinPred = Min <$> (tok "-" *> parsePred)
 parsePosPred = Pos <$> parsePred
 
-eq a b = Eq [a,b]
-parseEq = Pos <$> (eq <$> parseTerm <* tok "=" <*> parseTerm)
-parseNeq = Min <$> (eq <$> parseTerm <* tok "!=" <*> parseTerm)
+parseEq = Pos <$> (Eq <$> parseTerm <* tok "=" <*> parseTerm)
+parseNeq = Min <$> (Eq <$> parseTerm <* tok "!=" <*> parseTerm)
 
 parseLiteral = parseMinPred <|> try parseEq <|> try parseNeq <|> parsePosPred
 
@@ -131,52 +130,52 @@ parseProofStep = do
     tok "]."
     return $ ProofStep num cls j1 j2
 
-renaming i clause = [ (n, Var $ n ++ "_" ++ i) | n <- clause ^.. traverse . atom . predicateArguments . traverse . variables . _Var ]
+renaming i clause = [ (n, Var $ n ++ "_" ++ i) | n <- clause ^.. traverse . atom . predicateArguments . variables . _Var ]
 
 paramodulate :: Clause -> LitNum -> P9TermPath -> Clause -> LitNum -> P9TermPath -> Maybe (Subst, Subst, Clause)
 paramodulate c1 l1 p1 c2 l2 p2 = do
   let s1 = renaming "t1" c1
   let s2 = renaming "t2" c2
-  let c1' = c1 & traverse . atom . predicateArguments . traverse %~ (@@ s1)
-  let c2' = c2 & traverse . atom . predicateArguments . traverse %~ (@@ s2)
+  let c1' = c1 & traverse . atom . predicateArguments %~ (@@ s1)
+  let c2' = c2 & traverse . atom . predicateArguments %~ (@@ s2)
   t1' <- c1' ^? ix l1 . p9TermAt p1
   t2' <- c2' ^? ix l2 . p9TermAt p2
   unif <- t1' `mgu` t2'
   t1replacement' <- c1' ^? ix l1 . p9TermAt [2]
   let pm = [ l | (i, l) <- zip [0..] c1', i /= l1 ] ++ (c2' & ix l2 . p9TermAt p2 %~ const t1replacement')
-  return $ (s1 .*. unif, s2 .*. unif, pm & traverse . atom . predicateArguments . traverse %~ (@@ unif))
+  return $ (s1 .*. unif, s2 .*. unif, pm & traverse . atom . predicateArguments %~ (@@ unif))
 
 resolve :: Clause -> LitNum -> Clause -> LitNum -> Maybe (Subst, Subst, Clause)
 resolve c1 l1 c2 l2 = do
   let s1 = renaming "t1" c1
   let s2 = renaming "t2" c2
-  let c1' = c1 & traverse . atom . predicateArguments . traverse %~ (@@ s1)
-  let c2' = c2 & traverse . atom . predicateArguments . traverse %~ (@@ s2)
-  t1' <- c1' ^? ix l1 . atom . predicateArguments
-  t2' <- c2' ^? ix l2 . atom . predicateArguments
+  let c1' = c1 & traverse . atom . predicateArguments %~ (@@ s1)
+  let c2' = c2 & traverse . atom . predicateArguments %~ (@@ s2)
+  let t1' = c1' ^.. ix l1 . atom . predicateArguments
+  let t2' = c2' ^.. ix l2 . atom . predicateArguments
   unif <- App [] t1' `mgu` App [] t2'
   let res = [ l | (i, l) <- zip [0..] c1', i /= l1 ] ++ [ l | (i, l) <- zip [0..] c2', i /= l2 ]
-  return $ (s1 .*. unif, s2 .*. unif, res & traverse . atom . predicateArguments . traverse %~ (@@ unif))
+  return $ (s1 .*. unif, s2 .*. unif, res & traverse . atom . predicateArguments %~ (@@ unif))
 
 hseqForStep :: HM.HashMap ClauseNum ProofStep -> ProofStep -> HM.HashMap ClauseNum [Term] -> [Term]
 hseqForStep proof step hseqs =
     case step ^. j1 of
-      Assumption -> [App (step ^. clause . labels . traverse) (nub . sort $ step ^.. clause . clause . traverse . atom . predicateArguments . traverse . variables)]
+      Assumption -> [App (step ^. clause . labels . traverse) (nub . sort $ step ^.. clause . clause . traverse . atom . predicateArguments . variables)]
       Copy clauseNum -> hseqs ^. ix clauseNum
       Para c1 l1 p1 c2 l2 p2 -> fromJust $ do
         cl1 <- proof ^? ix c1 . clause . clause
         cl2 <- proof ^? ix c2 . clause . clause
         (s1, s2, paramodulant) <- paramodulate cl1 l1 p1 cl2 l2 p2
-        let pmTerms = paramodulant ^.. traverse . atom . predicateArguments . traverse
-        let p9Terms = step ^.. clause . clause . traverse . atom . predicateArguments . traverse
+        let pmTerms = paramodulant ^.. traverse . atom . predicateArguments
+        let p9Terms = step ^.. clause . clause . traverse . atom . predicateArguments
         let backsubst = zip pmTerms p9Terms ^.. traverse . to (uncurry solve) . _Just . traverse
         return $ (hseqs ^.. ix c1 . traverse . to (@@ (s1 .*. backsubst))) ++ (hseqs ^.. ix c2 . traverse . to (@@ (s2 .*. backsubst)))
       Resolve c1 l1 c2 l2 -> fromJust $ do
         cl1 <- proof ^? ix c1 . clause . clause
         cl2 <- proof ^? ix c2 . clause . clause
         (s1, s2, res) <- resolve cl1 l1 cl2 l2
-        let resTerms = res ^.. traverse . atom . predicateArguments . traverse
-        let p9Terms = step ^.. clause . clause . traverse . atom . predicateArguments . traverse
+        let resTerms = res ^.. traverse . atom . predicateArguments
+        let p9Terms = step ^.. clause . clause . traverse . atom . predicateArguments
         let backsubst = zip resTerms p9Terms ^.. traverse . to (uncurry solve) . _Just . traverse
         return $ (hseqs ^.. ix c1 . traverse . to (@@ (s1 .*. backsubst))) ++ (hseqs ^.. ix c2 . traverse . to (@@ (s2 .*. backsubst)))
 
@@ -198,8 +197,8 @@ writeTerm (App s []) = s
 writeTerm (App s ts) = s ++ "(" ++ intercalate "," (map writeTerm ts) ++ ")"
 writeTerm (Var s) = s
 
-writeLiteral (Min (Eq [a,b])) = show a ++ " != " ++ show b
-writeLiteral (Pos (Eq [a,b])) = show a ++ " = " ++ show b
+writeLiteral (Min (Eq a b)) = show a ++ " != " ++ show b
+writeLiteral (Pos (Eq a b)) = show a ++ " = " ++ show b
 writeLiteral (Min (Pred t ts)) = "-" ++ writeTerm (App t ts)
 writeLiteral (Pos (Pred t ts)) = writeTerm (App t ts)
 

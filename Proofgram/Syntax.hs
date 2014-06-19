@@ -16,7 +16,7 @@ data Term = App Symbol [Term]
           deriving (Eq, Ord)
 
 data Atom = Pred Symbol [Term]
-          | Eq [Term]
+          | Eq Term Term
           deriving (Eq, Ord)
 
 instance Show Term where
@@ -25,7 +25,7 @@ instance Show Term where
 
 instance Show Atom where
     show (Pred s ts) = s ++ "(" ++ intercalate "," (map show ts) ++ ")"
-    show (Eq [a,b]) = show a ++ " = " ++ show b
+    show (Eq a b) = show a ++ " = " ++ show b
 
 data Formula = And Formula Formula
              | Or Formula Formula
@@ -39,9 +39,9 @@ makePrisms ''Term
 makePrisms ''Atom
 makePrisms ''Formula
 
-predicateArguments :: Lens' Atom [Term]
-predicateArguments f (Pred s ts) = Pred s `fmap` f ts
-predicateArguments f (Eq ts) = Eq `fmap` f ts
+predicateArguments :: Traversal' Atom Term
+predicateArguments f (Pred s ts) = Pred s <$> traverse f ts
+predicateArguments f (Eq a b) = Eq <$> f a <*> f b
 
 functions :: Traversal' Term Symbol
 functions f (App s ts) = App <$> f s <*> traverse (functions f) ts
