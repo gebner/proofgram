@@ -89,3 +89,13 @@ App s ts `solve` App u vs = do
       return $ subst .*. newSubst
 a@(App _ _) `solve` v@(Var _) = fail $ show a ++ " `solve` " ++ show v
 Var s `solve` t = return [(s, t)]
+
+positions :: Term -> [Path]
+positions (App _ ts) = ([]:) $ do
+    (i, t) <- zip [0..] ts
+    subTermPosition <- positions t
+    return (i : subTermPosition)
+positions (Var _) = [[]]
+
+subTerms :: Term -> [Term]
+subTerms t = t ^.. to positions . traverse . to (\p -> t ^?! subTermAt p)
